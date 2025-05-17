@@ -1,0 +1,14 @@
+FROM node:18-alpine
+
+# Create app directory
+WORKDIR /app
+
+# Install dependencies
+COPY package*.json ./
+RUN npm install
+
+# TypeScript watch mode will handle compilation
+EXPOSE 3000
+
+# Start the application in development mode with hot reload
+CMD ["npm", "run", "dev"]

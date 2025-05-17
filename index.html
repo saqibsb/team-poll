@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Team Polls WebSocket Test</title>
+    <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .card {
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .option {
+            padding: 10px;
+            margin: 5px 0;
+            border: 1px solid #eee;
+            border-radius: 4px;
+            display: flex;
+            justify-content: space-between;
+        }
+        
+        .option-count {
+            font-weight: bold;
+            min-width: 30px;
+            text-align: center;
+            background: #f0f0f0;
+            border-radius: 4px;
+            padding: 2px 8px;
+        }
+        
+        .events {
+            height: 200px;
+            overflow-y: auto;
+            border: 1px solid #eee;
+            padding: 10px;
+            background: #f9f9f9;
+            border-radius: 4px;
+        }
+        
+        .event-item {
+            margin-bottom: 5px;
+            padding: 5px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .controls {
+            margin-top: 20px;
+        }
+        
+        button {
+            padding: 8px 16px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        
+        button:hover {
+            background: #45a049;
+        }
+        
+        input {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 300px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Team Polls WebSocket Test</h1>
+    
+    <div class="card">
+        <h2>Connect to Poll</h2>
+        <div>
+            <input type="text" id="pollIdInput" placeholder="Enter Poll ID here">
+            <button onclick="connectToPoll()">Connect</button>
+        </div>
+    </div>
+    
+    <div class="card">
+        <h2>Poll Data</h2>
+        <div id="pollQuestion">No poll connected</div>
+        <div id="pollOptions"></div>
+    </div>
+    
+    <div class="card">
+        <h2>Real-time Events</h2>
+        <div class="events" id="events"></div>
+    </div>
+    
+    <div class="card">
+        <h2>Connection Status</h2>
+        <div id="status">Disconnected</div>
+    </div>
+    
+    <script>
+        let socket = null;
+        let currentPollId = null;
+        
+        // Initialize poll data
+        let pollData = null;
+        
+        function connectToPoll() {
+            const pollId = document.getElementById('pollIdInput').value.trim();
+            
+            if (!pollId) {
+                alert('Please enter a valid Poll ID');
+                return;
+            }
+            
+            // Disconnect previous connection if any
+            if (socket) {
+                socket.disconnect();
+            }
+            
+            // Update status
+            document.getElementById('status').textContent = 'Connecting...';
+            
+            // Connect to WebSocket
+            socket = io('http://localhost:3000');
+            
+            // Connection events
+            socket.on('connect', () => {
+                document.getElementById('status').textContent = 'Connected';
+                
+                // Join the poll room
+                socket.emit('join:poll', pollId);
+                currentPollId = pollId;
+                
+                // Fetch initial poll data
+                fetchPollData(pollId);
+                
+                addEvent('Connected to WebSocket server');
+                addEvent(`Joined poll room: ${pollId}`);
+            });
+            
+            socket.on('disconnect', () => {
+                document.getElementById('status').textContent = 'Disconnected';
+                addEvent('Disconnected from WebSocket server');
+            });
+            
+            socket.on('connect_error', (error) => {
+                document.getElementById('status').textContent = 'Connection Error';
+                addEvent(`Connection error: ${error.message}`);
+            });
+            
+            // Poll events
+            socket.on('poll:update', (data) => {
+                addEvent(`Poll updated: ${JSON.stringify(data)}`);
+                updatePollData(data);
+            });
+            
+            socket.on('poll:closed', (data) => {
+                addEvent(`Poll closed: ${JSON.stringify(data)}`);
+                document.getElementById('status').textContent = 'Poll Closed';
+            });
+        }
+        
+        function fetchPollData(pollId) {
+            fetch(`http://localhost:3000/poll/${pollId}`)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    pollData = data;
+                    renderPollData();
+                    addEvent(`Fetched poll data: ${data.question}`);
+                })
+                .catch(error => {
+                    addEvent(`Error fetching poll: ${error.message}`);
+                });
+        }
+        
+        function renderPollData() {
+            if (!pollData) return;
+            
+            // Set question
+            document.getElementById('pollQuestion').textContent = pollData.question;
+            
+            // Render options
+            const optionsContainer = document.getElementById('pollOptions');
+            optionsContainer.innerHTML = '';
+            
+            pollData.options.forEach(option => {
+                const optionDiv = document.createElement('div');
+                optionDiv.className = 'option';
+                optionDiv.id = `option-${option.id}`;
+                
+                const textSpan = document.createElement('span');
+                textSpan.textContent = option.text;
+                
+                const countSpan = document.createElement('span');
+                countSpan.className = 'option-count';
+                countSpan.textContent = option.count;
+                
+                optionDiv.appendChild(textSpan);
+                optionDiv.appendChild(countSpan);
+                optionsContainer.appendChild(optionDiv);
+            });
+        }
+        
+        function updatePollData(update) {
+            if (!pollData || update.pollId !== currentPollId) return;
+            
+            // Update option counts
+            Object.entries(update.options).forEach(([optionId, delta]) => {
+                const option = pollData.options.find(opt => opt.id === optionId);
+                if (option) {
+                    option.count += delta;
+                    
+                    // Update the UI
+                    const optionElement = document.getElementById(`option-${optionId}`);
+                    if (optionElement) {
+                        const countSpan = optionElement.querySelector('.option-count');
+                        if (countSpan) {
+                            countSpan.textContent = option.count;
+                            
+                            // Highlight the change
+                            countSpan.style.backgroundColor = delta > 0 ? '#DFF2BF' : '#FFBABA';
+                            setTimeout(() => {
+                                countSpan.style.backgroundColor = '#f0f0f0';
+                            }, 1000);
+                        }
+                    }
+                }
+            });
+        }
+        
+        function addEvent(message) {
+            const eventsContainer = document.getElementById('events');
+            const eventDiv = document.createElement('div');
+            eventDiv.className = 'event-item';
+            
+            const time = new Date().toLocaleTimeString();
+            eventDiv.textContent = `[${time}] ${message}`;
+            
+            eventsContainer.prepend(eventDiv);
+        }
+    </script>
+</body>
+</html>
